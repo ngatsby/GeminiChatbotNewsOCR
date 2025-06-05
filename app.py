@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 # 환경 변수에서 Gemini API Key 불러오기
 load_dotenv()
-genai.configure(api_key=os.getenv("AIzaSyCtN5qIj5G8R1bVS9dFRZvixj5Fy8h33XE"))  # .env에 GOOGLE_API_KEY 설정
+genai.configure(api_key=os.getenv("API key"))  # .env에 GOOGLE_API_KEY 설정
 model = genai.GenerativeModel("gemini-1.5-flash")
 
 # OCR로 PDF 텍스트 추출
