@@ -1,9 +1,7 @@
 streamlit
-pytesseract
-Pillow
-PyMuPDF
+pymupdf
+sentence-transformers
+scikit-learn
+faiss-cpu
 python-dotenv
 google-generativeai
-sentence-transformers
-langchain
-faiss-cpu

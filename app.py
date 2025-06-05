@@ -1,65 +1,102 @@
 import os
 import fitz
-import pytesseract
 import streamlit as st
-from PIL import Image
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import faiss
+import numpy as np
 import tempfile
 import google.generativeai as genai
 from dotenv import load_dotenv
 
-# 환경 변수에서 Gemini API Key 불러오기
+# Load environment variables
 load_dotenv()
-genai.configure(api_key=os.getenv("API key"))  # .env에 GOOGLE_API_KEY 설정
+genai.configure(api_key=os.getenv("AIzaSyCtN5qIj5G8R1bVS9dFRZvixj5Fy8h33XE"))
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-# OCR로 PDF 텍스트 추출
-def extract_text_from_pdf(pdf_path):
+embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+def extract_text_by_page(pdf_path):
     doc = fitz.open(pdf_path)
-    full_text = ""
-    for page in doc:
-        pix = page.get_pixmap(dpi=200)
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        text = pytesseract.image_to_string(img, lang="kor+eng", config="--psm 1")
-        full_text += text + "\n"
-    return full_text.strip()
+    return [page.get_text() for page in doc]
 
-# 한글 및 영어 요약
-def summarize_in_korean_and_english(article_text):
-    prompt_kr = f"다음 기사를 한국어로 간결하게 요약해 주세요:\n\n{article_text}"
-    prompt_en = f"Please summarize the following article in English:\n\n{article_text}"
+def create_faiss_index(texts):
+    embeddings = embedder.encode(texts)
+    index = faiss.IndexFlatL2(embeddings.shape[1])
+    index.add(np.array(embeddings).astype('float32'))
+    return index, embeddings
 
-    response_kr = model.generate_content(prompt_kr).text.strip()
-    response_en = model.generate_content(prompt_en).text.strip()
+def summarize(text):
+    korean_prompt = f"다음 내용을 한국어로 요약해 주세요:\n\n{text[:4000]}"
+    english_prompt = f"Please summarize the following in English:\n\n{text[:4000]}"
+    kr = model.generate_content(korean_prompt).text.strip()
+    en = model.generate_content(english_prompt).text.strip()
+    return kr, en
 
-    return response_kr, response_en
+def answer_question(text, question):
+    prompt = f"""다음은 책의 일부입니다:
+
+{text[:4000]}
+
+질문: {question}
+답변:"""
+    return model.generate_content(prompt).text.strip()
+
+def answer_question_with_vector(query, texts, embeddings):
+    query_embedding = embedder.encode([query])
+    similarities = cosine_similarity(query_embedding, embeddings)[0]
+    top_indices = similarities.argsort()[-3:][::-1]
+    top_texts = [texts[i] for i in top_indices]
+    context = "\n\n".join(top_texts)
+    return answer_question(context, query)
 
 # Streamlit UI
-st.set_page_config("신문 요약 챗봇", layout="centered")
-st.title("📰 신문 기사 요약 및 질의응답 챗봇")
+st.set_page_config(page_title="📄 PDF 범위 요약 및 질의응답", layout="wide")
+st.title("📄 PDF 구간 요약 및 질문 챗봇")
 
-uploaded_file = st.file_uploader("📄 OCR이 필요한 신문 PDF 업로드", type=["pdf"])
+uploaded_file = st.file_uploader("📤 PDF 파일 업로드", type=["pdf"])
+
 if uploaded_file:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
         tmp_file.write(uploaded_file.read())
-        tmp_pdf_path = tmp_file.name
+        pdf_path = tmp_file.name
 
-    with st.spinner("🔍 OCR로 텍스트 인식 중..."):
-        article_text = extract_text_from_pdf(tmp_pdf_path)
+    all_pages = extract_text_by_page(pdf_path)
+    total_pages = len(all_pages)
+    st.success(f"총 {total_pages} 페이지를 가진 PDF가 업로드되었습니다.")
 
-    with st.spinner("✍️ Gemini로 요약 중..."):
-        summary_kr, summary_en = summarize_in_korean_and_english(article_text)
+    start_page = st.number_input("시작 페이지 (1부터 시작)", min_value=1, max_value=total_pages, value=1)
+    end_page = st.number_input("끝 페이지", min_value=1, max_value=total_pages, value=min(5, total_pages))
 
-    st.markdown("### 📑 한국어 요약")
-    st.write(summary_kr)
+    if start_page <= end_page:
+        selected_texts = all_pages[start_page - 1:end_page]
+        section_text = "\n".join(selected_texts)
 
-    st.markdown("### 📑 English Summary")
-    st.write(summary_en)
+        st.subheader("4. 구간 요약")
+        if st.button("📘 요약 시작"):
+            with st.spinner("요약 중..."):
+                kr_sum, en_sum = summarize(section_text)
+                st.markdown("### 🇰🇷 한국어 요약")
+                st.write(kr_sum)
+                st.markdown("### 🇺🇸 영어 요약")
+                st.write(en_sum)
 
-    # 추가 질문
-    user_question = st.text_input("❓ 기사에 대해 질문해 보세요:")
-    if user_question:
-        with st.spinner("🤖 답변 생성 중..."):
-            q_prompt = f"다음은 기사입니다:\n\n{article_text}\n\n사용자 질문: {user_question}\n\n답변:"
-            answer = model.generate_content(q_prompt).text.strip()
-            st.markdown("### 🤖 답변")
-            st.write(answer)
+        st.subheader("5. 구간 내용에서 질문")
+        question1 = st.text_input("질문1 입력:")
+        if question1:
+            with st.spinner("답변 생성 중..."):
+                answer1 = answer_question(section_text, question1)
+                st.markdown("### 🤖 답변 1")
+                st.write(answer1)
+
+        st.subheader("6. 전체 내용에서 질문")
+        question2 = st.text_input("질문2 입력:")
+        if question2:
+            with st.spinner("벡터 인덱스 생성 중..."):
+                index, embeddings = create_faiss_index(all_pages)
+                with st.spinner("답변 생성 중..."):
+                    answer2 = answer_question_with_vector(question2, all_pages, embeddings)
+                    st.markdown("### 🤖 답변 2")
+                    st.write(answer2)
+    else:
+        st.warning("시작 페이지는 끝 페이지보다 작거나 같아야 합니다.")
