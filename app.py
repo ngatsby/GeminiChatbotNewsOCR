@@ -19,7 +19,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 # --- Global Models (Load once for efficiency) ---
 @st.cache_resource # Cache the model to avoid re-loading on every rerun
 def load_gemini_model():
-    return genai.GenerativeModel("models/gemini-pro")
+    return genai.GenerativeModel("models/gemini-1.5-flash")
 
 @st.cache_resource # Cache the embedding model
 def load_embedding_model():
