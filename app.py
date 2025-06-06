@@ -1,8 +1,6 @@
 import os
 import fitz
 import streamlit as st
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 import faiss
 import numpy as np
 import tempfile
@@ -13,24 +11,40 @@ from dotenv import load_dotenv
 load_dotenv()
 genai.configure(api_key=os.getenv("AIzaSyCtN5qIj5G8R1bVS9dFRZvixj5Fy8h33XE"))
 model = genai.GenerativeModel("gemini-1.5-flash")
-
-embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+embed_model = genai.GenerativeModel("embedding-001")
 
 def extract_text_by_page(pdf_path):
     doc = fitz.open(pdf_path)
     return [page.get_text() for page in doc]
 
+def get_gemini_embedding(text):
+    try:
+        res = embed_model.embed_content(
+            content=text,
+            task_type="retrieval_document"
+        )
+        return np.array(res['embedding'], dtype='float32')
+    except Exception as e:
+        st.error(f"❌ 임베딩 실패: {e}")
+        return None
+
 def create_faiss_index(texts):
-    embeddings = embedder.encode(texts)
-    index = faiss.IndexFlatL2(embeddings.shape[1])
-    index.add(np.array(embeddings).astype('float32'))
-    return index, embeddings
+    embeddings = [get_gemini_embedding(t) for t in texts]
+    valid = [(e, t) for e, t in zip(embeddings, texts) if e is not None]
+    if not valid:
+        st.error("❌ 유효한 임베딩이 없습니다.")
+        return None, None
+    emb_array = np.array([v[0] for v in valid])
+    texts = [v[1] for v in valid]
+    index = faiss.IndexFlatL2(emb_array.shape[1])
+    index.add(emb_array)
+    return index, emb_array, texts
 
 def summarize(text):
-    korean_prompt = f"다음 내용을 한국어로 요약해 주세요:\n\n{text[:4000]}"
-    english_prompt = f"Please summarize the following in English:\n\n{text[:4000]}"
-    kr = model.generate_content(korean_prompt).text.strip()
-    en = model.generate_content(english_prompt).text.strip()
+    kr_prompt = f"다음 내용을 한국어로 요약해 주세요:\n\n{text[:4000]}"
+    en_prompt = f"Please summarize the following in English:\n\n{text[:4000]}"
+    kr = model.generate_content(kr_prompt).text.strip()
+    en = model.generate_content(en_prompt).text.strip()
     return kr, en
 
 def answer_question(text, question):
@@ -42,17 +56,18 @@ def answer_question(text, question):
 답변:"""
     return model.generate_content(prompt).text.strip()
 
-def answer_question_with_vector(query, texts, embeddings):
-    query_embedding = embedder.encode([query])
-    similarities = cosine_similarity(query_embedding, embeddings)[0]
-    top_indices = similarities.argsort()[-3:][::-1]
-    top_texts = [texts[i] for i in top_indices]
+def answer_question_with_vector(query, faiss_index, texts, emb_array):
+    q_emb = get_gemini_embedding(query)
+    if q_emb is None:
+        return "❌ 질문 임베딩에 실패했습니다."
+    _, I = faiss_index.search(np.array([q_emb]), k=3)
+    top_texts = [texts[i] for i in I[0]]
     context = "\n\n".join(top_texts)
     return answer_question(context, query)
 
 # Streamlit UI
 st.set_page_config(page_title="📄 PDF 범위 요약 및 질의응답", layout="wide")
-st.title("📄 PDF 구간 요약 및 질문 챗봇")
+st.title("📄 PDF 구간 요약 및 질문 챗봇 (Gemini Embedding)")
 
 uploaded_file = st.file_uploader("📤 PDF 파일 업로드", type=["pdf"])
 
@@ -93,10 +108,11 @@ if uploaded_file:
         question2 = st.text_input("질문2 입력:")
         if question2:
             with st.spinner("벡터 인덱스 생성 중..."):
-                index, embeddings = create_faiss_index(all_pages)
-                with st.spinner("답변 생성 중..."):
-                    answer2 = answer_question_with_vector(question2, all_pages, embeddings)
-                    st.markdown("### 🤖 답변 2")
-                    st.write(answer2)
+                faiss_index, emb_array, valid_texts = create_faiss_index(all_pages)
+                if faiss_index:
+                    with st.spinner("답변 생성 중..."):
+                        answer2 = answer_question_with_vector(question2, faiss_index, valid_texts, emb_array)
+                        st.markdown("### 🤖 답변 2")
+                        st.write(answer2)
     else:
         st.warning("시작 페이지는 끝 페이지보다 작거나 같아야 합니다.")
