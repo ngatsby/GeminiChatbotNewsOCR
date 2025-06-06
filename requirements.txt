@@ -1,7 +1,8 @@
 streamlit
-pymupdf
+python-dotenv
+PyMuPDF
+faiss-cpu
 sentence-transformers
 scikit-learn
-faiss-cpu
-python-dotenv
+numpy
 google-generativeai
