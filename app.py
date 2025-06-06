@@ -9,7 +9,7 @@ import google.generativeai as genai
 
 # --- Configuration ---
 # Ensure the API key is securely accessed
-GEMINI_API_KEY = st.secrets.get("AIzaSyCtN5qIj5G8R1bVS9dFRZvixj5Fy8h33XE")
+GEMINI_API_KEY = st.secrets.get("Key")
 if not GEMINI_API_KEY:
     st.error("Gemini API key not found in Streamlit secrets. Please add 'Key' to your secrets.")
     st.stop() # Stop the app if the key is not found
